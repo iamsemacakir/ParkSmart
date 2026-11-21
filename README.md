@@ -1,195 +1,129 @@
 # ParkSmart
-Parking Application
 
-Documentation
+ParkSmart is a parking lot manager that runs in the browser. It shows every bay on a live map of the lot, checks cars in and out with the right fee, sends each arrival to the best free bay, and keeps a history you can search, chart and export.
 
-Overview
-This documentation describes the structure, styling, and functionality of a parking system web page called ParkSmart. It uses HTML for structuring the layout, CSS for styling the elements, and JavaScript for handling user interaction to simulate parking spot occupancy.
+![The lot map with a new arrival being guided to bay B17](docs/lot-map.jpg)
 
-Table of Contents
-    HTML
-        Structure
-        Key Elements
-    CSS
-        Layout
-        Key Styles
-    JavaScript
-        Interactivity
-        Event Handling
+There is no build step and nothing to install: open `index.html` and it works.
 
+## What it does
 
-HTML
-    The HTML structure defines the layout of the parking system interface. It includes a grid layout representing parking spots, roads, and a navigation bar.
+- **Live lot map.** All 52 bays drawn from above, with cars, sensor lights (green free, red taken, amber over the time limit), EV charging and accessible bays, barrier gates and the street outside.
+- **Check in.** Enter a plate, pick the vehicle and color, and mark EV or accessible needs. ParkSmart suggests the best free bay and draws the route from the gate. The car then drives in from the street.
+- **Check out.** See the time parked and an itemised receipt, choose card, cash or app, then print the receipt. The car backs out and leaves through the exit gate.
+- **Move a car** to another free bay, for when someone parks in the wrong place.
+- **Find any car** by plate or bay from the search box. Cars that have left show when they left.
+- **Time limit alerts** flag cars parked longer than the limit you set.
+- **Activity** lists who is parked now and every finished visit, filterable and exportable to CSV.
+- **Insights** for the last 24 hours: revenue, visits, average stay, occupancy over time, revenue by hour, length of stay, busiest bays and payment methods.
+- **Heatmap** colours each bay by how much of the last 24 hours it was taken.
+- **Setup** for the lot name, currency, rates, grace period, daily maximum and time limit, with a live price preview. Bays can be repainted as standard, EV charging or accessible straight on the map.
+- **Traffic simulation** sends cars in and out on their own, which is handy for demos.
+- **Light and dark themes**, a phone layout with a bottom sheet, full keyboard use and screen reader labels.
 
-Structure
-    The document begins with the HTML5 <!DOCTYPE html> declaration, setting up the basic structure of the web page:
+The first time it opens, the lot is filled with a believable day of demo data. **Setup → Empty the lot** clears it so you can start with real cars.
 
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-                    <title>ParkSmart</title>
-                    <link rel="stylesheet" href="css/normalize.css"/>
-                    <link rel="stylesheet" href="css/style.css"/>
-                </head>
-                <body>
-                    <nav class="navbar"></nav>
+## Running it
 
-                    <div class="main-div">
-                        <div class="topbar"></div>
+Open `index.html` in a current version of Chrome, Edge, Firefox or Safari.
 
-                        <main class="main-section">
-                            <div class="parking-div">
-                                <div class="left-road"></div>
+If you prefer a local server (some browsers limit pages opened straight from disk):
 
-                                <div class="parking-center">
-                                    <div class="upper-road"></div>
+```bash
+python3 -m http.server 8000
+# then visit http://localhost:8000
+```
 
-                                    <!-- Top Parking Grid -->
-                                    <div class="top-parking">
-                                        <div class="grid-container">
-                                            <!-- Parking Spots A1 to A26 -->
-                                        </div>
-                                    </div>
+Everything is saved in the browser's local storage, so it survives a reload. Use **Setup → Download backup** to keep a copy or move it to another computer, and **Restore backup** to load it again.
 
-                                    <div class="middle-road"></div>
+The interface uses the Overpass and Barlow Condensed fonts from Google Fonts. Without a connection it falls back to system fonts and still works.
 
-                                    <!-- Bottom Parking Grid -->
-                                    <div class="bottom-parking">
-                                        <div class="grid-container">
-                                            <!-- Parking Spots B1 to B26 -->
-                                        </div>
-                                    </div>
+## Using it
 
-                                    <div class="bottom-road"></div>
-                                </div>
+| To | Do this |
+| --- | --- |
+| Check a car in | **New arrival** (or press `N`), or click a free bay |
+| Check a car out | Click the car's bay, then **Check out** |
+| Move a car | Click its bay, then **Move to another bay**, then click a free bay |
+| Find a car | Type in the search box (press `/` to jump there) |
+| Repaint bays | **Edit bays**, then click a bay to cycle standard → EV charging → accessible |
 
-                                <div class="right-road"></div>
-                            </div>
-                        </main>
-                    </div>
+### Keyboard
 
-                    <script src="js/script.js"></script>
-                </body>
-                </html>
+| Key | Action |
+| --- | --- |
+| `/` | Search for a plate or bay |
+| `N` | New arrival |
+| Arrow keys | Move between bays on the map, `Home` and `End` jump to the ends of a row |
+| `Enter` or `Space` | Open the focused bay |
+| `Esc` | Close the panel, cancel a move, or finish editing bays |
 
-    Key Elements
-        Navbar: Represented by <nav class="navbar"></nav>. It's a vertical navigation bar on the left side of the page.
-        Parking Grid: Two sets of parking spots (top and bottom) represented by the grid-container class. Each parking spot is a div with an id for identification (e.g., A1, A2, B1).
-        Roads: Div elements representing roads (left, right, upper, middle, and bottom roads) are used as visual separators between parking areas.
+## How fees work
 
+Every started hour is charged: the first hour at one rate and each extra hour at another. Stays shorter than the grace period are free, and the daily maximum caps each 24-hour block.
 
-CSS
-    The CSS file defines the visual layout of the page, including grid arrangement, background images, and responsive scaling.
+With the default rates (10 minutes free, $3 for the first hour, $2 for each extra hour, $20 a day at most):
 
-    Layout
-        The main layout consists of a flexbox structure to organize the parking spots and roads horizontally. Here's the style for the body:
+- 8 minutes costs nothing.
+- 2 hours 15 minutes is 3 started hours: $3 + 2 × $2 = **$7**.
+- 30 hours is one full day ($20) plus 6 hours of the next ($3 + 5 × $2 = $13): **$33**.
 
-            body {
-                width: 2060px; 
-                height: 1000px;   
-                display: flex;
-                flex-direction: row;
-                margin: 0;
-                overflow: hidden; 
-            }
+All amounts are stored in cents, so there are no rounding errors.
 
-    Key Styles
-        Grid Layout: The parking spots are organized in a grid format. Each grid-container uses CSS Grid to arrange 13 columns of parking spots:
+## How bays are chosen
 
-            .grid-container {
-                display: grid;
-                grid-template-columns: repeat(13, 121px);
-                grid-gap: 4px;
-                height: 100%;
-                box-sizing: border-box;
-            }
+- **Accessible permit:** the free accessible bay closest to the booth by the entrance. If none are free, the closest bay to the booth.
+- **Electric vehicle:** the nearest free charging bay by driving distance from the gate. If none are free, the nearest standard bay.
+- **Everyone else:** the nearest free standard bay, so charging and accessible bays stay free for the people who need them.
 
-        Parking Spots: Individual parking spots are styled as grid-item, which adjusts their font size, cursor, and layout:
+Any free bay can still be picked by clicking it on the map.
 
-            .grid-item {
-                color: #d1bd13;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100px;
-                font-weight: bold;
-                cursor: pointer;
-                font-size: 24px;
-            }
+## Project structure
 
-        Roads: The background images for roads are handled via background-image, and their size is adjusted using background-size: contain.
+```
+index.html        Page structure
+css/style.css     All styles: tokens, layout, the map, dark theme, phone layout, print
+js/config.js      Lot geometry, bay types and default settings
+js/utils.js       Helpers for formatting, licence plates and downloads
+js/pricing.js     Fee rules and the receipt breakdown
+js/store.js       State, actions, validation and local storage
+js/demo.js        The demo day and random arrivals for the simulation
+js/routing.js     The road network, driving routes and bay choice
+js/stats.js       Occupancy, revenue and usage figures
+js/lot-map.js     The SVG lot: drawing, cars, driving animation, keyboard use
+js/charts.js      Small SVG charts for Insights
+js/views.js       Activity, Insights and Setup
+js/app.js         Top bar, side panel, checkout, search, shortcuts and simulation
+docs/             Screenshots for this README
+```
 
-            .left-road, .right-road {
-                background-image: url(../images/road-leftandright.png);
-                background-size: contain;
-                width: 100%;
-                height: 846px;
-            }
+The scripts are plain JavaScript with no framework or dependencies. They share one `window.PS` namespace and load in the order listed in `index.html`.
 
-        Occupied Parking Spots: When a parking spot is marked as occupied, a larger font size and an image of a car are applied:
+### Data
 
-            .grid-item.occupied {
-                font-size: 40px;
-            }
+State is saved under the `parksmart:v2` key in local storage:
 
-            .grid-item img {
-                width: 80%;
-                height: 50%;
-                object-fit: contain;
-            }
+```js
+{
+  settings: { lotName, currency, graceMinutes, firstHour, extraHour, dailyMax, maxStayHours, theme },
+  bayTypes: { A1: 'standard', A14: 'ev', B14: 'accessible', ... },
+  sessions: { B3: { plate, kind, color, entered, needs: { ev, accessible } }, ... },  // cars parked now
+  history:  [ { plate, spot, entered, exited, fee, method }, ... ]                  // finished visits, fee in cents
+}
+```
 
-JavaScript
-    The JavaScript file provides interactivity by allowing users to toggle parking spots between vacant and occupied states.
+Saved data and restored backups are validated before use, so a damaged file cannot break the app.
 
-    Interactivity
-        When a user clicks on a parking spot, the JavaScript code determines whether the spot is occupied or not and updates its status.
+## Changes from the first version
 
-    Event Handling
-        The core logic is the toggleParkingSpot function, which toggles a parking spot between occupied and unoccupied states:
+The first version drew the lot from background images and let you click a bay to toggle a random car picture on or off. This version keeps the same layout of two blocks with bays A1 to A26 and B1 to B26, and finishes the app around it:
 
-            function toggleParkingSpot(event) {
-                const gridItem = event.target.closest('.grid-item'); 
-                
-                const carImages = [
-                    '../images/car1.png',
-                    '../images/car4.png',
-                    '../images/car5.png'
-                ];
+- Each car now has a plate, vehicle, color and arrival time. Fees, receipts, history, search, insights and backups are new.
+- The lot is drawn in SVG instead of 4.4 MB of images. It scales to any screen, works on phones, and supports a dark theme.
+- Fixed bay B15, which had the id `A15` and showed the wrong label after a car left.
+- Fixed the layout, which was fixed to 2060 × 1000 pixels and cut off on most screens.
+- Pinch zoom is no longer blocked, and the map can be used with a keyboard or a screen reader.
 
-                if (gridItem.classList.contains('occupied')) {
-                    gridItem.classList.remove('occupied');
-                    gridItem.innerHTML = gridItem.id; 
-                } else {
-                    gridItem.classList.add('occupied');
-                    gridItem.innerHTML = ''; 
+## Credits
 
-                    const randomIndex = Math.floor(Math.random() * carImages.length);
-                    const randomCarImage = carImages[randomIndex];
-
-                    const img = document.createElement('img');
-                    img.src = randomCarImage;
-                    img.alt = 'Car';
-                    gridItem.appendChild(img);
-                }
-            }
-
-        Occupied/Unoccupied Toggle: When the parking spot is clicked, the occupied class is added or removed. The class addition causes the parking spot to display a car image.
-        Random Car Image: A random car image is selected from an array of car images using Math.random().
-
-    Event Listener
-        The event listener waits for the DOM content to load and adds a click event to each parking spot:
-
-            document.addEventListener('DOMContentLoaded', function() {
-                const parkingSpots = document.querySelectorAll('.grid-item');
-                parkingSpots.forEach(spot => {
-                    spot.addEventListener('click', toggleParkingSpot);
-                });
-            });
-        
-        This ensures that the parking spots are interactive once the page has fully loaded.
-
-
-Conclusion
-    This documentation provides an overview of the ParkSmart parking system. It covers how the HTML defines the page structure, how CSS styles the layout, and how JavaScript provides interactivity. This system allows users to click on parking spots and simulate their occupancy dynamically.
+ParkSmart was started by Sema Yasharova.
