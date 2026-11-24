@@ -2,7 +2,7 @@
 
 ParkSmart is a parking lot manager that runs in the browser. It shows every bay on a live map of the lot, checks cars in and out with the right fee, sends each arrival to the best free bay, and keeps a history you can search, chart and export.
 
-![The lot map with a new arrival being guided to bay B17](docs/lot-map.jpg)
+![The lot map seen from above, with a new arrival being guided from the entry barrier to bay B18](docs/lot-map.jpg)
 
 There is no build step and nothing to install: open `index.html` and it works.
 
