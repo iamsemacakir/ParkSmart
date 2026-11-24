@@ -8,7 +8,7 @@ There is no build step and nothing to install: open `index.html` and it works.
 
 ## What it does
 
-- **Live lot map.** All 52 bays drawn from above, with cars, sensor lights (green free, red taken, amber over the time limit), EV charging and accessible bays, barrier gates and the street outside.
+- **Live lot map.** All 52 bays seen from above and drawn to scale like an aerial photo: worn asphalt with oil stains, patches and sealed cracks, faded white paint, wheel stops, kerbs and planted islands, trees and light poles casting shadows, and the street outside. Cars come in four body styles with their own shadows. Sensor lights show each bay's state (green free, red taken, amber over the time limit), and EV bays have charge points.
 - **Check in.** Enter a plate, pick the vehicle and color, and mark EV or accessible needs. ParkSmart suggests the best free bay and draws the route from the gate. The car then drives in from the street.
 - **Check out.** See the time parked and an itemised receipt, choose card, cash or app, then print the receipt. The car backs out and leaves through the exit gate.
 - **Move a car** to another free bay, for when someone parks in the wrong place.
@@ -90,7 +90,8 @@ js/store.js       State, actions, validation and local storage
 js/demo.js        The demo day and random arrivals for the simulation
 js/routing.js     The road network, driving routes and bay choice
 js/stats.js       Occupancy, revenue and usage figures
-js/lot-map.js     The SVG lot: drawing, cars, driving animation, keyboard use
+js/scene.js       The ground, painted on a canvas: asphalt, paint, kerbs, lawn, street, trees
+js/lot-map.js     The map on top in SVG: bays, cars, sensor lights, driving animation, keyboard use
 js/charts.js      Small SVG charts for Insights
 js/views.js       Activity, Insights and Setup
 js/app.js         Top bar, side panel, checkout, search, shortcuts and simulation
@@ -119,7 +120,7 @@ Saved data and restored backups are validated before use, so a damaged file cann
 The first version drew the lot from background images and let you click a bay to toggle a random car picture on or off. This version keeps the same layout of two blocks with bays A1 to A26 and B1 to B26, and finishes the app around it:
 
 - Each car now has a plate, vehicle, color and arrival time. Fees, receipts, history, search, insights and backups are new.
-- The lot is drawn in SVG instead of 4.4 MB of images. It scales to any screen, works on phones, and supports a dark theme.
+- The lot is drawn in code instead of 4.4 MB of images: a canvas for the ground and SVG for everything you can click. It scales to any screen and works on phones.
 - Fixed bay B15, which had the id `A15` and showed the wrong label after a car left.
 - Fixed the layout, which was fixed to 2060 × 1000 pixels and cut off on most screens.
 - Pinch zoom is no longer blocked, and the map can be used with a keyboard or a screen reader.

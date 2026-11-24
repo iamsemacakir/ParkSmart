@@ -970,7 +970,7 @@ select.input {
   min-height: 0;
   overflow: hidden;
   border-radius: var(--radius);
-  background: #4E6C50;
+  background: #5A7442;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), var(--shadow-1);
 }
 
@@ -982,8 +982,19 @@ select.input {
 }
 
 .lot {
+  position: relative;
   width: 100%;
   height: 100%;
+}
+
+/* The ground is painted on a canvas under the map (js/scene.js). */
+.lot-ground {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .map-banner {
@@ -1087,6 +1098,7 @@ select.input {
 
 /* ---------- Lot SVG ---------- */
 .lot-svg {
+  position: relative;
   display: block;
   width: 100%;
   height: 100%;
@@ -1101,39 +1113,27 @@ select.input {
   pointer-events: none;
 }
 
-.bay-label {
-  fill: #E2B92C;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-anchor: middle;
-}
-
-.bay-label-light {
-  fill: #fff;
-  opacity: 0.92;
-}
-
-.lot-word {
-  fill: #EEF1EC;
-  font-size: 11px;
+/* Bay numbers when the ground can't be painted on a canvas */
+.bay-num {
+  fill: #F3F3ED;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.08em;
   text-anchor: middle;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
-.lot-svg .lot-sign {
-  fill: #fff;
-  font-family: var(--font-ui);
-  font-size: 11px;
-  font-weight: 800;
+/* Words painted in special bays, stretched along the bay like road markings */
+.bay-word {
+  fill: url(#ps-paint-white) #F1F1EC;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   text-anchor: middle;
 }
 
 .heat-label {
   fill: #0E1418;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   text-anchor: middle;
 }
@@ -1157,7 +1157,7 @@ select.input {
 .bay-ring {
   fill: none;
   stroke: transparent;
-  stroke-width: 2.5;
+  stroke-width: 3;
   pointer-events: none;
   transition: stroke 0.15s;
 }
@@ -1185,7 +1185,7 @@ select.input {
 .bay.is-selected .bay-ring,
 .bay.is-selected:hover .bay-ring {
   stroke: #F2C230;
-  stroke-width: 3.2;
+  stroke-width: 3.8;
   stroke-dasharray: none;
 }
 
@@ -1202,7 +1202,7 @@ select.input {
   }
   60%,
   100% {
-    stroke-width: 3.2;
+    stroke-width: 3.8;
     stroke-opacity: 1;
   }
 }
@@ -1273,10 +1273,16 @@ select.input {
   opacity: 0;
 }
 
-/* Sensor lights */
+/* Sensor lights: a small puck on the aisle in front of each bay */
 .led-core,
 .led-halo {
   transition: fill 0.3s;
+}
+
+.led-base {
+  fill: #1E2326;
+  stroke: rgba(255, 255, 255, 0.4);
+  stroke-width: 0.8;
 }
 
 .led-halo {
@@ -1316,7 +1322,7 @@ select.input {
 .route-casing {
   fill: none;
   stroke: rgba(8, 24, 54, 0.55);
-  stroke-width: 9;
+  stroke-width: 11;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -1324,16 +1330,16 @@ select.input {
 .route-line {
   fill: none;
   stroke: #5B9BFF;
-  stroke-width: 4;
+  stroke-width: 5;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-dasharray: 12 9;
+  stroke-dasharray: 14 10;
   animation: route-flow 0.9s linear infinite;
 }
 
 @keyframes route-flow {
   to {
-    stroke-dashoffset: -21;
+    stroke-dashoffset: -24;
   }
 }
 
@@ -1358,18 +1364,14 @@ select.input {
   }
 }
 
-/* Barrier gates */
+/* Barrier gates: a raised arm is seen end-on from above, so it shortens */
 .gate-arm {
   transform-box: view-box;
   transition: transform 0.5s cubic-bezier(0.3, 0.7, 0.2, 1);
 }
 
-.gate-entry.is-open .gate-arm {
-  transform: rotate(-84deg);
-}
-
-.gate-exit.is-open .gate-arm {
-  transform: rotate(84deg);
+.gate.is-open .gate-arm {
+  transform: scaleX(0.12);
 }
 
 /* ---------- Side panel ---------- */
@@ -1745,7 +1747,7 @@ select.input {
   place-items: center;
   height: 96px;
   border-radius: 12px;
-  background: var(--asphalt);
+  background: #505357;
 }
 
 .car-figure::before,
@@ -1756,8 +1758,8 @@ select.input {
   right: 14px;
   height: 2.5px;
   border-radius: 2px;
-  background: var(--paint);
-  opacity: 0.9;
+  background: #F3F3ED;
+  opacity: 0.85;
 }
 
 .car-figure::before {
@@ -1770,8 +1772,9 @@ select.input {
 
 .car-figure-svg {
   position: relative;
-  width: 150px;
-  height: 75px;
+  width: 160px;
+  height: 70px;
+  filter: drop-shadow(2px 3px 2px rgba(0, 0, 0, 0.45));
 }
 
 .facts {
@@ -3093,7 +3096,7 @@ dialog[open] {
   .lot {
     width: max(100%, 720px);
     height: auto;
-    aspect-ratio: 900 / 690;
+    aspect-ratio: 1014 / 1000;
   }
 
   .legend-hint {

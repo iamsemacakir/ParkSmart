@@ -8,39 +8,52 @@
   const PS = (window.PS = window.PS || {});
 
   /* ---------- Lot geometry (SVG user units) ----------
-   * The lot keeps the original ParkSmart layout: a road loop with a
-   * middle road, and two double-row blocks (A and B) of 26 bays each.
+   * Drawn to scale: 18.4 units to the metre, so a bay is 2.5 m by 5 m and
+   * the two-way aisles are 6.3 m wide. The layout is the original
+   * ParkSmart one: an aisle loop with a middle aisle, and two double rows
+   * of bays (blocks A and B) with planted islands at each end.
    */
-  const BAY_W = 46;
-  const BAY_D = 84;
+  const M = 18.4; // units per metre
+  const BAY_W = 46; // 2.5 m
+  const BAY_D = 92; // 5 m
   const COLS = 13;
+  const ISLAND = 48; // 2.6 m planted island at each end of a double row
+  const ROAD = 116; // 6.3 m two-way aisle
 
   const LOT = {
-    width: 900,
-    height: 690,
+    width: 1014,
+    height: 1000,
+    unitsPerMeter: M,
+    metersPerUnit: 1 / M,
     bayW: BAY_W,
     bayD: BAY_D,
     cols: COLS,
-    roadW: 64,
-    // Road centre lines
-    xL: 72, // left road
-    xR: 822, // right road
-    yT: 68, // top road
-    yM: 300, // middle road
-    yB: 532, // bottom road
-    // Paved outer edge of the road loop
-    paved: { x: 40, y: 36, w: 814, h: 528 },
-    // Parking blocks (between the roads)
+    island: ISLAND,
+    roadW: ROAD,
+    // Aisle centre lines
+    xL: 102, // west aisle
+    xR: 912, // east aisle
+    yT: 102, // north aisle
+    yM: 402, // middle aisle
+    yB: 702, // south aisle
+    // Paved area inside the kerb
+    paved: { x: 44, y: 44, w: 926, h: 716, r: 34 },
+    // Double rows of bays, islands included
     blocks: {
-      A: { x: 104, y: 100, w: 686, h: 168 },
-      B: { x: 104, y: 332, w: 686, h: 168 },
+      A: { x: 160, y: 160, w: 694, h: 184 },
+      B: { x: 160, y: 460, w: 694, h: 184 },
     },
-    bayX0: 148, // left edge of the first bay column
-    street: { y0: 600, y1: 662 }, // public street below the lot
-    gateY: 568, // barrier gates sit where the driveways meet the lot
-    booth: { x: 112, y: 570, w: 30, h: 24 }, // attendant booth by the entrance
-    laneOffset: 14, // cars drive on the right-hand side of each road
-    metersPerUnit: 2.5 / BAY_W, // a bay is 2.5 m wide
+    bayX0: 208, // left edge of the first bay column
+    strip: { y0: 760, y1: 810 }, // planted strip with the booth and barriers
+    sidewalk: { y0: 810, y1: 846 },
+    street: { y0: 850, y1: 982 }, // public street, one lane each way
+    farWalk: { y0: 986, y1: 1022 },
+    gateY: 787, // barrier arms across the driveways
+    entry: { x0: 92, x1: 172 }, // one-way entry driveway
+    exit: { x0: 842, x1: 922 }, // one-way exit driveway
+    walkway: { x0: 176, x1: 200 }, // footpath from the sidewalk to the crossing
+    booth: { x: 208, y: 771, w: 40, h: 28 }, // attendant booth by the entrance
+    laneOffset: 30, // traffic keeps to the right-hand lane
   };
   LOT.streetMid = (LOT.street.y0 + LOT.street.y1) / 2;
   LOT.roadY = { T: LOT.yT, M: LOT.yM, B: LOT.yB };
@@ -48,13 +61,13 @@
 
   /* Rows of bays. `road` is the aisle each row opens onto. */
   const ROWS = [
-    { block: 'A', y: 100, road: 'T', first: 1 }, // A1–A13 open up to the top road
-    { block: 'A', y: 184, road: 'M', first: 14 }, // A14–A26 open down to the middle road
-    { block: 'B', y: 332, road: 'M', first: 1 }, // B1–B13 open up to the middle road
-    { block: 'B', y: 416, road: 'B', first: 14 }, // B14–B26 open down to the bottom road
+    { block: 'A', y: 160, road: 'T', first: 1 }, // A1–A13 open onto the north aisle
+    { block: 'A', y: 252, road: 'M', first: 14 }, // A14–A26 open onto the middle aisle
+    { block: 'B', y: 460, road: 'M', first: 1 }, // B1–B13 open onto the middle aisle
+    { block: 'B', y: 552, road: 'B', first: 14 }, // B14–B26 open onto the south aisle
   ];
 
-  const PARK_SHIFT = 3; // parked cars sit slightly towards the back of the bay
+  const PARK_SHIFT = 1; // parked cars pull up close to the wheel stop
 
   PS.BAYS = [];
   PS.BAY_BY_ID = {};
@@ -115,10 +128,20 @@
 
   PS.CURRENCIES = ['USD', 'EUR', 'GBP', 'CHF', 'TRY', 'PLN', 'RON', 'CAD', 'AUD', 'JPY', 'INR'];
 
+  /* Vehicle kinds people pick at check-in, and the body shapes the map
+   * draws for each. A car is drawn as a saloon or a hatchback. */
   PS.VEHICLES = {
-    car: { name: 'Car', hl: 28, hw: 13 },
-    suv: { name: 'SUV', hl: 30, hw: 14 },
-    van: { name: 'Van', hl: 31, hw: 14 },
+    car: { name: 'Car', styles: ['sedan', 'hatch'] },
+    suv: { name: 'SUV', styles: ['suv'] },
+    van: { name: 'Van', styles: ['van'] },
+  };
+
+  /* Half length and half width in units: a saloon is 4.7 m by 1.85 m. */
+  PS.CAR_STYLES = {
+    sedan: { hl: 43, hw: 17 },
+    hatch: { hl: 40, hw: 16.8 },
+    suv: { hl: 44, hw: 18 },
+    van: { hl: 45, hw: 18.5 },
   };
 
   PS.CAR_COLORS = {

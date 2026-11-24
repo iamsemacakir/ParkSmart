@@ -108,7 +108,8 @@
     return out;
   }
 
-  /* Polyline with rounded corners as an SVG path string. */
+  /* Polyline with rounded corners as an SVG path string. A point may carry
+   * its own corner radius as a third value. */
   function roundedPath(pts, radius = 24) {
     pts = dedupe(pts);
     if (pts.length < 2) return '';
@@ -120,7 +121,7 @@
       const c = pts[i + 1];
       const l1 = len(sub(b, a));
       const l2 = len(sub(c, b));
-      const r = Math.min(radius, l1 / 2, l2 / 2);
+      const r = Math.min(b[2] || radius, l1 / 2, l2 / 2);
       const p1 = [b[0] + ((a[0] - b[0]) * r) / l1, b[1] + ((a[1] - b[1]) * r) / l1];
       const p2 = [b[0] + ((c[0] - b[0]) * r) / l2, b[1] + ((c[1] - b[1]) * r) / l2];
       d += ` L${f(p1)} Q${f(b)} ${f(p2)}`;
@@ -155,20 +156,40 @@
     let reverse = null;
 
     if (fromBay) {
-      // Back out of the bay, turning towards the direction of travel.
+      // Back straight out until the nose clears the neighbours, then swing
+      // the tail round towards the direction of travel.
       const dir = road.length > 1 ? Math.sign(road[1][0] - road[0][0]) || 1 : 1;
+      const side = fromBay.opensUp ? -1 : 1; // from the bay into its aisle
+      const outY = fromBay.edgeY + side * 64;
       const laneY = fromBay.roadY + (dir > 0 ? off : -off);
       const start = [fromBay.cx, fromBay.parkY];
-      const lane = [fromBay.cx, laneY];
-      const backed = [fromBay.cx - dir * 30, laneY];
-      reverse = [start, lane, backed];
+      const out = [fromBay.cx, outY];
+      const backed = [fromBay.cx - dir * 34, outY];
+      reverse = [start, out, backed];
       const lanePts = road.length > 1 ? laneOffset(road, off).slice(1) : [];
-      road = [backed, lane, ...lanePts];
+      road = [backed, [fromBay.cx + dir * 30, laneY], ...lanePts];
     } else {
       road = laneOffset(road, off);
     }
 
-    if (toBay) road.push([toBay.cx, toBay.parkY]);
+    if (toBay) {
+      // Turn in from the far side of the aisle, so the car is straight by
+      // the time its nose reaches the bay, as a driver would.
+      const side = toBay.opensUp ? -1 : 1;
+      const approachY = toBay.edgeY + side * 78;
+      const last = road[road.length - 1];
+      const prev = road[road.length - 2];
+      const nearHalf = Math.abs(last[1] - toBay.edgeY) < L.roadW / 2;
+      if (nearHalf && prev) {
+        const dir = Math.sign(last[0] - prev[0]) || 1;
+        const run = Math.max(0, Math.min(66, Math.abs(last[0] - prev[0]) - 6));
+        road[road.length - 1] = [toBay.cx - dir * run, last[1]];
+        road.push([toBay.cx, approachY, 40]);
+      } else {
+        road[road.length - 1] = [toBay.cx, approachY, 40];
+      }
+      road.push([toBay.cx, toBay.parkY]);
+    }
     return { reverse, forward: dedupe(road), length: found.length };
   }
 

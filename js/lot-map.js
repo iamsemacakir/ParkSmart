@@ -1,7 +1,11 @@
 /* ParkSmart — lot map
- * Draws the lot as one SVG: landscaping, roads, painted bays, sensor
- * lights, cars and trees. Cars drive in from the street, back out of
- * bays and leave through the exit gate along real routes.
+ * The lot as it looks from the air. scene.js paints the ground (asphalt,
+ * paint, kerbs, lawn and street) on a canvas; this SVG sits on top and
+ * holds everything that changes or can be clicked: paint for EV and
+ * accessible bays, sensor lights, cars and their shadows, the barriers,
+ * trees and light poles, the heatmap and the bays themselves. Cars drive
+ * in from the street, back out of bays and leave through the exit along
+ * real routes.
  */
 (function () {
   'use strict';
@@ -12,18 +16,17 @@
   const NS = 'http://www.w3.org/2000/svg';
 
   const C = {
-    grass: '#4E6C50',
-    hedge: '#3C5B3F',
-    road: '#353A3F',
-    block: '#454A50',
-    street: '#2F3438',
-    curb: '#8E969C',
-    sidewalk: '#A3A9AC',
-    yellow: '#F2C230',
-    paint: '#EEF1EC',
-    ev: '#1C9A6B',
-    acc: '#2560C6',
+    lawn: '#5a7442',
+    asphalt: '#53565a',
+    street: '#45484c',
+    concrete: '#bbb8b0',
+    kerb: '#c9c6be',
+    mulch: '#5a3f2f',
+    paint: '#f3f3ed',
+    ev: '#1e8a5c',
+    acc: '#245cc0',
   };
+  const SUN = [3.4, 4.4]; // where a car's shadow falls, in lot units: light from the north-west
   const SPEED = 340; // lot units per second when driving forwards
   const REVERSE_SPEED = 130;
 
@@ -42,6 +45,7 @@
     moveSource: null,
     heat: false,
     heatData: null,
+    painted: false, // true when scene.js drew the ground on a canvas
     arriving: new Set(),
     moving: new Set(),
     busy: new Set(), // bays a car is still pulling out of or into
@@ -57,292 +61,169 @@
     return node;
   };
   const f1 = (n) => (Math.round(n * 10) / 10).toString();
+  const f2 = (n) => (Math.round(n * 100) / 100).toString();
 
-  function grainURL() {
-    try {
-      const c = document.createElement('canvas');
-      c.width = c.height = 128;
-      const ctx = c.getContext('2d');
-      const img = ctx.createImageData(128, 128);
-      const rnd = U.seeded(11);
-      for (let i = 0; i < img.data.length; i += 4) {
-        const v = rnd();
-        const shade = v > 0.5 ? 255 : 0;
-        img.data[i] = img.data[i + 1] = img.data[i + 2] = shade;
-        img.data[i + 3] = Math.floor(Math.abs(v - 0.5) * 2 * 30);
-      }
-      ctx.putImageData(img, 0, 0);
-      return c.toDataURL('image/png');
-    } catch (e) {
-      return '';
-    }
+  function hashStr(str) {
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+    return h >>> 0;
   }
 
   function defs() {
-    const grain = grainURL();
-    return `
-    <defs>
-      ${grain ? `<pattern id="ps-grain" patternUnits="userSpaceOnUse" width="128" height="128"><image href="${grain}" width="128" height="128"/></pattern>` : ''}
-      <linearGradient id="ps-carShade" x1="0" x2="1" y1="0" y2="0">
-        <stop offset="0" stop-color="#000" stop-opacity=".34"/><stop offset=".22" stop-color="#000" stop-opacity=".05"/>
-        <stop offset=".5" stop-color="#fff" stop-opacity=".16"/><stop offset=".78" stop-color="#000" stop-opacity=".05"/>
-        <stop offset="1" stop-color="#000" stop-opacity=".34"/>
+    return `<defs>
+      <linearGradient id="ps-car-x" x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0" stop-color="#000" stop-opacity=".55"/><stop offset=".08" stop-color="#000" stop-opacity=".2"/>
+        <stop offset=".22" stop-color="#000" stop-opacity="0"/><stop offset=".4" stop-color="#fff" stop-opacity=".13"/>
+        <stop offset=".6" stop-color="#fff" stop-opacity=".13"/><stop offset=".78" stop-color="#000" stop-opacity="0"/>
+        <stop offset=".92" stop-color="#000" stop-opacity=".2"/><stop offset="1" stop-color="#000" stop-opacity=".55"/>
       </linearGradient>
-      <linearGradient id="ps-glass" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0" stop-color="#3a4b59"/><stop offset="1" stop-color="#141c23"/>
+      <linearGradient id="ps-car-y" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" stop-color="#000" stop-opacity=".34"/><stop offset=".05" stop-color="#000" stop-opacity=".06"/>
+        <stop offset=".16" stop-color="#fff" stop-opacity=".08"/><stop offset=".84" stop-color="#fff" stop-opacity="0"/>
+        <stop offset=".95" stop-color="#000" stop-opacity=".08"/><stop offset="1" stop-color="#000" stop-opacity=".34"/>
       </linearGradient>
-      <linearGradient id="ps-roofShine" x1="0" x2="1" y1="0" y2="1">
-        <stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/>
+      <linearGradient id="ps-car-glass" x1="0" x2=".35" y1="0" y2="1">
+        <stop offset="0" stop-color="#46535d"/><stop offset=".5" stop-color="#222b32"/><stop offset="1" stop-color="#0e1317"/>
       </linearGradient>
-      <radialGradient id="ps-canopy" cx=".38" cy=".34" r=".75">
-        <stop offset="0" stop-color="#7FA463"/><stop offset=".55" stop-color="#557F45"/><stop offset="1" stop-color="#2F5229"/>
-      </radialGradient>
-      <radialGradient id="ps-canopyDark" cx=".4" cy=".36" r=".8">
-        <stop offset="0" stop-color="#6A9455"/><stop offset=".6" stop-color="#456F3A"/><stop offset="1" stop-color="#284824"/>
-      </radialGradient>
-      <filter id="ps-carShadow" x="-40%" y="-25%" width="180%" height="150%">
-        <feDropShadow dx="1.6" dy="2.6" stdDeviation="1.6" flood-color="#000" flood-opacity=".55"/>
-      </filter>
-      <pattern id="ps-slabs" patternUnits="userSpaceOnUse" width="36" height="40">
-        <rect width="36" height="40" fill="${C.sidewalk}"/><path d="M0 0V40" stroke="#80878B" stroke-width="1"/>
-      </pattern>
+      <linearGradient id="ps-car-roof" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity=".3"/><stop offset=".45" stop-color="#fff" stop-opacity=".05"/>
+        <stop offset="1" stop-color="#000" stop-opacity=".12"/>
+      </linearGradient>
     </defs>`;
   }
 
-  /* ---------- Static scene ---------- */
-  function ground() {
-    const P = L.paved;
-    let s = `<rect x="-1600" y="-1200" width="4100" height="3100" fill="${C.grass}"/>`;
-    // street and far sidewalk
-    s += `<rect x="-1600" y="${L.street.y0}" width="4100" height="${L.street.y1 - L.street.y0}" fill="${C.street}"/>`;
-    s += `<rect x="-1600" y="${L.street.y1}" width="4100" height="44" fill="url(#ps-slabs)"/>`;
-    s += `<path d="M-1600 ${L.street.y1 + 0.5}H2500" stroke="#C9CDCF" stroke-width="2"/>`;
-    // paved road loop with curb
-    s += `<rect x="${P.x}" y="${P.y}" width="${P.w}" height="${P.h}" rx="26" fill="${C.road}" stroke="${C.curb}" stroke-width="2.5"/>`;
-    // driveways down to the street, with rounded curb returns
-    const y0 = L.street.y0;
-    const rr = 14;
-    for (const x of [P.x, L.xR - 32]) {
-      const x1 = x + 64;
-      s += `<rect x="${x}" y="${P.y + P.h - 30}" width="64" height="${y0 - (P.y + P.h) + 34}" fill="${C.road}"/>`;
-      s += `<path d="M${x - rr} ${y0 + 1} L${x} ${y0 + 1} L${x} ${y0 - rr} A${rr} ${rr} 0 0 1 ${x - rr} ${y0 + 1} Z" fill="${C.road}"/>`;
-      s += `<path d="M${x1 + rr} ${y0 + 1} L${x1} ${y0 + 1} L${x1} ${y0 - rr} A${rr} ${rr} 0 0 0 ${x1 + rr} ${y0 + 1} Z" fill="${C.road}"/>`;
-      s += `<path d="M${x} ${P.y + P.h + 1}V${y0 - rr} A${rr} ${rr} 0 0 1 ${x - rr} ${y0} M${x1} ${P.y + P.h + 1}V${y0 - rr} A${rr} ${rr} 0 0 0 ${x1 + rr} ${y0}" fill="none" stroke="${C.curb}" stroke-width="2.5"/>`;
+  /* ---------- Cars ----------
+   * Drawn from above at true size, with the front towards -y. Each body
+   * style has its own outline and glasshouse. */
+  const SHAPES = {
+    // corner radii front (x, y) and rear, bumper bulge front and rear,
+    // windshield base and top, rear window top and base, half widths of
+    // the roof and of the waistline
+    sedan: { rf: [6, 9], rr: [5.5, 7.5], bulge: [1.6, 1.2], ws: [-19, -7.5], rw: [15, 25.5], gw: 12.2, bw: 14.6, hood: true, pillar: true },
+    hatch: { rf: [6, 9], rr: [4.5, 5.5], bulge: [1.6, 0.8], ws: [-16.5, -5.5], rw: [23, 31.5], gw: 12, bw: 14.4, hood: true, pillar: true, spoiler: true },
+    suv: { rf: [5.5, 7], rr: [4, 5], bulge: [1.2, 0.8], ws: [-21, -11], rw: [30, 37], gw: 13.4, bw: 15.6, hood: true, pillar: true, rails: true, spoiler: true },
+    van: { rf: [7, 10], rr: [3, 3.5], bulge: [1.8, 0.4], ws: [-34, -25], rw: [44.4, 44.4], gw: 15.2, bw: 16.8, ribs: true, cab: true },
+  };
+
+  function outline(hl, hw, sh) {
+    const [fx, fy] = sh.rf;
+    const [rx, ry] = sh.rr;
+    const [bf, br] = sh.bulge;
+    const yf = -hl + bf / 2;
+    const yr = hl - br / 2;
+    return (
+      `M${f2(-hw + fx)} ${f2(yf)}Q0 ${f2(-hl - bf / 2)} ${f2(hw - fx)} ${f2(yf)}` +
+      `C${f2(hw - fx * 0.35)} ${f2(yf)} ${f2(hw)} ${f2(-hl + fy * 0.35)} ${f2(hw)} ${f2(-hl + fy)}` +
+      `L${f2(hw)} ${f2(hl - ry)}C${f2(hw)} ${f2(hl - ry * 0.35)} ${f2(hw - rx * 0.35)} ${f2(yr)} ${f2(hw - rx)} ${f2(yr)}` +
+      `Q0 ${f2(hl + br / 2)} ${f2(-hw + rx)} ${f2(yr)}` +
+      `C${f2(-hw + rx * 0.35)} ${f2(yr)} ${f2(-hw)} ${f2(hl - ry * 0.35)} ${f2(-hw)} ${f2(hl - ry)}` +
+      `L${f2(-hw)} ${f2(-hl + fy)}C${f2(-hw)} ${f2(-hl + fy * 0.35)} ${f2(-hw + fx * 0.35)} ${f2(yf)} ${f2(-hw + fx)} ${f2(yf)}Z`
+    );
+  }
+
+  function carMarkup(kindOrStyle, color, opt = {}) {
+    const style = SHAPES[kindOrStyle] ? kindOrStyle : kindOrStyle === 'car' ? 'sedan' : (PS.VEHICLES[kindOrStyle] || PS.VEHICLES.car).styles[0];
+    const sh = SHAPES[style];
+    const { hl, hw } = PS.CAR_STYLES[style];
+    const [ws0, ws1] = sh.ws;
+    const [rw0, rw1] = sh.rw;
+    const { gw, bw } = sh;
+    const body = outline(hl, hw, sh);
+    const glass = 'url(#ps-car-glass)';
+    const roofFill = opt.darkRoof ? '#1e2226' : color;
+    let s = `<path d="${body}" fill="${color}"/>`;
+    s += `<path d="${body}" fill="url(#ps-car-x)"/><path d="${body}" fill="url(#ps-car-y)"/>`;
+    // creases down the bonnet catch the light
+    if (sh.hood) {
+      const y0 = -hl + 4;
+      const y1 = ws0 + 0.6;
+      const ym = (y0 + y1) / 2;
+      s += `<path d="M-6.4 ${f1(y0)}Q-7.4 ${f1(ym)} -8.8 ${f1(y1)}M6.4 ${f1(y0)}Q7.4 ${f1(ym)} 8.8 ${f1(y1)}" fill="none" stroke="#000" stroke-opacity=".16" stroke-width=".7"/>`;
+      s += `<path d="M-5.4 ${f1(y0)}Q-6.4 ${f1(ym)} -7.7 ${f1(y1)}M5.4 ${f1(y0)}Q6.4 ${f1(ym)} 7.7 ${f1(y1)}" fill="none" stroke="#fff" stroke-opacity=".16" stroke-width=".6"/>`;
     }
-    // hedge along the street between the driveways
-    const hx = L.booth.x + L.booth.w + 18;
-    s += `<rect x="${hx}" y="574" width="${L.xR - 32 - hx - 34}" height="17" rx="8.5" fill="${C.hedge}"/>`;
-    // parking blocks and their planted end islands
-    for (const b of Object.values(L.blocks)) {
-      s += `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="6" fill="${C.block}"/>`;
-      for (const ix of [b.x + 5, b.x + b.w - 41]) {
-        s += `<rect x="${ix}" y="${b.y + 7}" width="36" height="${b.h - 14}" rx="15" fill="${C.grass}" stroke="${C.curb}" stroke-width="2.5"/>`;
+    // windscreen, rear window and side glass
+    s += `<path d="M${f1(-bw + 0.4)} ${f1(ws0 + 1.2)}Q0 ${f1(ws0 - 2)} ${f1(bw - 0.4)} ${f1(ws0 + 1.2)}L${f1(gw)} ${f1(ws1)}Q0 ${f1(ws1 - 1.3)} ${f1(-gw)} ${f1(ws1)}Z" fill="${glass}"/>`;
+    s += `<path d="M${f1(-bw * 0.42)} ${f1(ws0 + 0.2)}L${f1(-bw * 0.16)} ${f1(ws0 - 0.1)}L${f1(-gw * 0.42)} ${f1(ws1 - 0.9)}L${f1(-gw * 0.7)} ${f1(ws1 - 0.6)}Z" fill="#fff" opacity=".13"/>`;
+    if (rw1 > rw0) {
+      s += `<path d="M${f1(-gw)} ${f1(rw0)}Q0 ${f1(rw0 + 1.3)} ${f1(gw)} ${f1(rw0)}L${f1(bw - 0.6)} ${f1(rw1 - 1)}Q0 ${f1(rw1 + 1.6)} ${f1(-bw + 0.6)} ${f1(rw1 - 1)}Z" fill="${glass}"/>`;
+      s += `<path d="M${f1(gw * 0.2)} ${f1(rw0 + 0.9)}L${f1(gw * 0.5)} ${f1(rw0 + 0.8)}L${f1(bw * 0.36)} ${f1(rw1 - 0.6)}L${f1(bw * 0.06)} ${f1(rw1 - 0.4)}Z" fill="#fff" opacity=".1"/>`;
+    }
+    const sideEnd = sh.cab ? ws1 + 11 : rw1 - 3;
+    const sideTop = sh.cab ? ws1 + 11 : rw0 - 0.6;
+    for (const k of [-1, 1]) {
+      s += `<path d="M${f1(k * bw)} ${f1(ws0 + 3)}L${f1(k * (gw + 0.2))} ${f1(ws1 + 0.6)}L${f1(k * (gw + 0.2))} ${f1(sideTop)}L${f1(k * (bw - 0.2))} ${f1(sideEnd)}Z" fill="${glass}"/>`;
+    }
+    // the roof, with a pillar between the doors
+    s += `<rect x="${f1(-gw - 0.3)}" y="${f1(ws1 - 0.4)}" width="${f1(2 * gw + 0.6)}" height="${f1(rw0 - ws1 + 0.8)}" rx="3.2" fill="${roofFill}"/>`;
+    s += `<rect x="${f1(-gw - 0.3)}" y="${f1(ws1 - 0.4)}" width="${f1(2 * gw + 0.6)}" height="${f1(rw0 - ws1 + 0.8)}" rx="3.2" fill="url(#ps-car-roof)"/>`;
+    if (sh.pillar) {
+      const py = ws1 + (rw0 - ws1) * 0.42;
+      s += `<path d="M${f1(-bw)} ${f1(py)}H${f1(-gw)}M${f1(gw)} ${f1(py)}H${f1(bw)}" stroke="${color}" stroke-width="1.8"/>`;
+    }
+    if (opt.sunroof) {
+      const len = Math.min(sh.rails ? 22 : 13, rw0 - ws1 - 6);
+      s += `<rect x="${f1(-gw + 3)}" y="${f1(ws1 + 2.6)}" width="${f1(2 * gw - 6)}" height="${f1(len)}" rx="2" fill="${glass}"/>`;
+      s += `<rect x="${f1(-gw + 3)}" y="${f1(ws1 + 2.6)}" width="${f1(2 * gw - 6)}" height="${f1(len)}" rx="2" fill="none" stroke="#000" stroke-opacity=".45" stroke-width=".5"/>`;
+    }
+    if (sh.rails) {
+      for (const k of [-1, 1]) {
+        const x = k * (gw - 2.4);
+        s += `<rect x="${f1(x - 0.8)}" y="${f1(ws1 + 2.4)}" width="1.6" height="${f1(rw0 - ws1 - 4.8)}" rx=".8" fill="#2c3135"/>`;
+        s += `<rect x="${f1(x - 0.8)}" y="${f1(ws1 + 2.4)}" width=".7" height="${f1(rw0 - ws1 - 4.8)}" rx=".35" fill="#9aa1a6"/>`;
       }
     }
-    // texture over everything
-    s += `<rect x="-1600" y="-1200" width="4100" height="3100" fill="url(#ps-grain)" pointer-events="none"/>`;
-    return s;
-  }
-
-  function staticPaint() {
-    let s = '';
-    const dash = `stroke="${C.paint}" stroke-width="2" stroke-dasharray="14 12" stroke-opacity=".78"`;
-    const bx0 = L.blocks.A.x + 10;
-    const bx1 = L.blocks.A.x + L.blocks.A.w - 10;
-    for (const y of [L.yT, L.yM, L.yB]) s += `<path d="M${bx0} ${y}H${bx1}" ${dash}/>`;
-    for (const x of [L.xL, L.xR]) {
-      for (const b of Object.values(L.blocks)) s += `<path d="M${x} ${b.y + 10}V${b.y + b.h - 10}" ${dash}/>`;
-    }
-    // street centre line and edge lines
-    s += `<path d="M-1600 ${L.streetMid}H2500" stroke="${C.paint}" stroke-width="2" stroke-dasharray="22 18" stroke-opacity=".8"/>`;
-    s += `<path d="M-1600 ${L.street.y0 + 4}H2500 M-1600 ${L.street.y1 - 4}H2500" stroke="${C.paint}" stroke-width="1.4" stroke-opacity=".45"/>`;
-    // driveway arrows and words
-    const arrow = (x, y, up) => {
-      const d = up ? -1 : 1;
-      return `<path d="M${x} ${y - d * 10}V${y + d * 8} M${x - 6} ${y + d * 2}L${x} ${y + d * 9}L${x + 6} ${y + d * 2}" fill="none" stroke="${C.paint}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>`;
-    };
-    s += arrow(L.xL + 14, 586, true) + arrow(L.xR - 14, 586, false);
-    s += `<text x="${L.xL - 13}" y="590" class="lot-word">IN</text><text x="${L.xR + 13}" y="590" class="lot-word">OUT</text>`;
-    // bay lines: dividers, centre line and end ticks, as in the original artwork
-    for (const b of Object.values(L.blocks)) {
-      const top = b.y + 3;
-      const bot = b.y + b.h - 3;
-      const mid = b.y + b.h / 2;
-      let d = `M${L.bayX0} ${mid}H${L.bayX0 + L.cols * L.bayW}`;
-      for (let c = 0; c <= L.cols; c++) {
-        const x = L.bayX0 + c * L.bayW;
-        d += ` M${x} ${top}V${bot} M${x - 5} ${top}H${x + 5} M${x - 5} ${bot}H${x + 5}`;
+    if (sh.ribs) {
+      let d = '';
+      let d2 = '';
+      for (let y = ws1 + 9; y < rw0 - 6; y += 11) {
+        d += `M${f1(-gw + 1.5)} ${f1(y)}H${f1(gw - 1.5)}`;
+        d2 += `M${f1(-gw + 1.5)} ${f1(y + 1.1)}H${f1(gw - 1.5)}`;
       }
-      s += `<path d="${d}" stroke="${C.yellow}" stroke-width="2.2" stroke-linecap="round" fill="none" opacity=".95"/>`;
+      s += `<path d="${d}" stroke="#000" stroke-opacity=".16" stroke-width=".9"/><path d="${d2}" stroke="#fff" stroke-opacity=".16" stroke-width=".7"/>`;
+      s += `<rect x="-3" y="${f1(hl - 2.2)}" width="6" height="1.2" rx=".5" fill="#c4271f"/>`;
     }
+    if (sh.spoiler) s += `<path d="M${f1(-gw + 1)} ${f1(rw0 + 0.4)}Q0 ${f1(rw0 + 1.7)} ${f1(gw - 1)} ${f1(rw0 + 0.4)}" fill="none" stroke="#000" stroke-opacity=".32" stroke-width=".9"/>`;
+    if (!sh.ribs) s += `<path d="M-1 ${f1(rw0 - 1.4)}Q0 ${f1(rw0 - 4.4)} 1 ${f1(rw0 - 1.4)}Z" fill="#15191c"/>`;
+    // wipers
+    s += `<path d="M${f1(-bw + 4)} ${f1(ws0 + 1.6)}L-1.5 ${f1(ws0 + 0.5)}M2 ${f1(ws0 + 0.5)}L${f1(bw - 3.6)} ${f1(ws0 + 1.4)}" stroke="#0b0e10" stroke-width=".55" stroke-linecap="round"/>`;
+    // mirrors
+    const my = ws0 + (sh.cab ? 5 : 3.2);
+    const ml = sh.cab ? 4.8 : 3.6;
+    for (const k of [-1, 1]) {
+      s += `<path d="M${f1(k * (bw - 0.4))} ${f1(my - 1.8)}L${f1(k * (hw + ml - 0.8))} ${f1(my - 1.2)}Q${f1(k * (hw + ml))} ${f1(my + 0.3)} ${f1(k * (hw + ml - 0.8))} ${f1(my + 1.7)}L${f1(k * (bw - 0.4))} ${f1(my + 2.1)}Z" fill="${color}" stroke="#000" stroke-opacity=".4" stroke-width=".5"/>`;
+    }
+    // lamps on the corners
+    const [fx, fy] = sh.rf;
+    const [rx, ry] = sh.rr;
+    for (const k of [-1, 1]) {
+      s += `<rect x="-1.1" y="-3.3" width="2.2" height="6.6" rx="1.1" fill="#e6edf0" stroke="#000" stroke-opacity=".35" stroke-width=".45" transform="translate(${f1(k * (hw - fx * 0.62))} ${f1(-hl + fy * 0.36)}) rotate(${-k * 58})"/>`;
+      s += `<rect x="-1" y="-2.8" width="2" height="5.6" rx="1" fill="#b3241e" stroke="#000" stroke-opacity=".3" stroke-width=".4" transform="translate(${f1(k * (hw - rx * 0.62))} ${f1(hl - ry * 0.38)}) rotate(${k * 58})"/>`;
+    }
+    s += `<path d="${body}" fill="none" stroke="#000" stroke-opacity=".42" stroke-width=".6"/>`;
     return s;
-  }
-
-  function tree(x, y, r, rnd, dark) {
-    const fill = dark ? 'url(#ps-canopyDark)' : 'url(#ps-canopy)';
-    let s = `<circle cx="${f1(x + r * 0.28)}" cy="${f1(y + r * 0.36)}" r="${f1(r * 1.02)}" fill="#000" opacity=".26"/>`;
-    s += `<circle cx="${f1(x)}" cy="${f1(y)}" r="${f1(r)}" fill="${fill}"/>`;
-    const lobes = 4 + Math.floor(rnd() * 3);
-    for (let i = 0; i < lobes; i++) {
-      const a = (i / lobes) * Math.PI * 2 + rnd();
-      const d = r * (0.45 + rnd() * 0.2);
-      s += `<circle cx="${f1(x + Math.cos(a) * d)}" cy="${f1(y + Math.sin(a) * d)}" r="${f1(r * (0.42 + rnd() * 0.16))}" fill="${fill}" opacity=".9"/>`;
-    }
-    s += `<circle cx="${f1(x - r * 0.25)}" cy="${f1(y - r * 0.28)}" r="${f1(r * 0.32)}" fill="#A8C98A" opacity=".22"/>`;
-    return s;
-  }
-
-  function canopy() {
-    const rnd = U.seeded(42);
-    let s = '';
-    // light poles on the centre line of each block
-    for (const b of Object.values(L.blocks)) {
-      const y = b.y + b.h / 2;
-      for (const c of [3, 10]) {
-        const x = L.bayX0 + c * L.bayW;
-        s += `<path d="M${x - 8} ${y + 4}H${x + 14}" stroke="#000" stroke-opacity=".28" stroke-width="3" stroke-linecap="round"/>`;
-        s += `<path d="M${x - 11} ${y}H${x + 11}" stroke="#2A2F33" stroke-width="2.2" stroke-linecap="round"/>`;
-        s += `<rect x="${x - 15}" y="${y - 2.2}" width="7" height="4.4" rx="1.4" fill="#E9E3C9"/><rect x="${x + 8}" y="${y - 2.2}" width="7" height="4.4" rx="1.4" fill="#E9E3C9"/>`;
-        s += `<circle cx="${x}" cy="${y}" r="3.4" fill="#2A2F33"/>`;
-      }
-    }
-    // trees on the islands
-    for (const b of Object.values(L.blocks)) {
-      for (const ix of [b.x + 23, b.x + b.w - 23]) {
-        s += tree(ix, b.y + 46, 15, rnd);
-        s += tree(ix, b.y + b.h - 46, 14, rnd, true);
-      }
-    }
-    // perimeter planting
-    for (let x = 30; x < 880; x += 62 + rnd() * 22) s += tree(x, 10 + rnd() * 8, 15 + rnd() * 5, rnd, rnd() > 0.5);
-    for (let y = 70; y < 560; y += 70 + rnd() * 20) {
-      s += tree(12 + rnd() * 8, y, 14 + rnd() * 4, rnd, rnd() > 0.5);
-      s += tree(886 + rnd() * 8, y + 20, 14 + rnd() * 4, rnd, rnd() > 0.5);
-    }
-    for (let x = 190; x < 740; x += 92 + rnd() * 20) s += tree(x, 583, 12 + rnd() * 3, rnd, true);
-    // planting beyond the frame, seen on wide screens
-    for (let i = 0; i < 70; i++) {
-      const side = i % 2 ? 1 : -1;
-      const x = side < 0 ? -40 - rnd() * 600 : L.width + 40 + rnd() * 600;
-      const y = -60 + rnd() * 660;
-      s += tree(x, y, 14 + rnd() * 10, rnd, rnd() > 0.5);
-    }
-    for (let x = -600; x < L.width + 600; x += 70 + rnd() * 40) s += tree(x, 724 + rnd() * 18, 16 + rnd() * 8, rnd, rnd() > 0.5);
-
-    // attendant booth and P sign by the entry
-    const B = L.booth;
-    s += `<rect x="${B.x + 3}" y="${B.y + 4}" width="${B.w}" height="${B.h}" rx="3" fill="#000" opacity=".3"/>`;
-    s += `<rect x="${B.x}" y="${B.y}" width="${B.w}" height="${B.h}" rx="3" fill="#C9CFD3" stroke="#8E979D" stroke-width="1"/>`;
-    s += `<rect x="${B.x + 3}" y="${B.y + 3}" width="${B.w - 6}" height="${B.h - 6}" rx="1.5" fill="#E4E8EA"/>`;
-    s += `<rect x="${B.x + 3}" y="${B.y + 3}" width="${B.w - 6}" height="4" rx="1" fill="#6FA9D6" opacity=".85"/>`;
-    s += `<g transform="translate(${L.paved.x - 27} 571)"><rect x="1.5" y="2" width="15" height="15" rx="2.5" fill="#000" opacity=".3"/><rect width="15" height="15" rx="2.5" fill="#1B5FC1" stroke="#fff" stroke-width="1.2"/><text x="7.5" y="11.6" class="lot-sign">P</text></g>`;
-    // pay terminal by the exit
-    s += `<rect x="${L.xR - 52}" y="574" width="12" height="16" rx="2" fill="#2A2F33" stroke="#11161A" stroke-width="1"/><rect x="${L.xR - 50}" y="577" width="8" height="5" rx="1" fill="#57B6F2"/>`;
-    return s;
-  }
-
-  function gates() {
-    const arm = (x0, x1) => {
-      const x = Math.min(x0, x1);
-      const w = Math.abs(x1 - x0);
-      return `<rect x="${x}" y="${L.gateY - 1.8}" width="${w}" height="3.6" rx="1.8" fill="#F4F4F2"/>
-        <path d="M${x + 3} ${L.gateY}H${x + w - 3}" stroke="#D2342C" stroke-width="3.6" stroke-dasharray="6 6"/>`;
-    };
-    const px0 = L.paved.x + 5;
-    const px1 = L.xR + 27;
-    return `
-      <g class="gate gate-entry" data-gate="entry">
-        <g class="gate-arm" style="transform-origin:${px0}px ${L.gateY}px">${arm(px0, L.xL + 30)}</g>
-        <circle cx="${px0}" cy="${L.gateY}" r="4.2" fill="#2A2F33" stroke="#F2C230" stroke-width="1.4"/>
-      </g>
-      <g class="gate gate-exit" data-gate="exit">
-        <g class="gate-arm" style="transform-origin:${px1}px ${L.gateY}px">${arm(L.xR - 30, px1)}</g>
-        <circle cx="${px1}" cy="${L.gateY}" r="4.2" fill="#2A2F33" stroke="#F2C230" stroke-width="1.4"/>
-      </g>`;
-  }
-
-  /* ---------- Bay type paint (changes when bays are repainted) ---------- */
-  const BOLT = 'M2.2 -9.5 L-6 1.6 H-0.6 L-2.4 9.5 L6 -1.8 H0.6 Z';
-  function wheelchair(x, y) {
-    return `<g transform="translate(${x} ${y})" fill="none" stroke="${C.paint}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity=".9">
-      <circle cx="-0.5" cy="-9.5" r="2.3" fill="${C.paint}" stroke="none"/>
-      <path d="M-1.6 -5.6 V2 H5.2 L7.8 8"/><path d="M-1.6 -2 H4.2"/>
-      <path d="M-4.4 -0.6 A6.4 6.4 0 1 0 4 7.2"/>
-    </g>`;
-  }
-
-  function typePaint() {
-    let s = '';
-    for (const bay of PS.BAYS) {
-      const type = PS.store.typeOf(bay.id);
-      const labelY = bay.opensUp ? bay.y + 14 : bay.y + bay.h - 6;
-      const symY = bay.cy + (bay.opensUp ? 6 : -6);
-      if (type === 'ev') {
-        s += `<rect x="${bay.x + 3.5}" y="${bay.y + 3.5}" width="${bay.w - 7}" height="${bay.h - 7}" rx="2" fill="${C.ev}" opacity=".5"/>`;
-        s += `<path d="${BOLT}" transform="translate(${bay.cx} ${symY}) scale(1.25)" fill="${C.paint}" opacity=".9"/>`;
-        // charge post at the head of the bay
-        const py = bay.opensUp ? bay.backY - 6 : bay.backY + 6;
-        s += `<rect x="${bay.cx + 13}" y="${py - 3}" width="6" height="6" rx="1.2" fill="#E8ECEE" stroke="#1C9A6B" stroke-width="1.4"/>`;
-      } else if (type === 'accessible') {
-        s += `<rect x="${bay.x + 3.5}" y="${bay.y + 3.5}" width="${bay.w - 7}" height="${bay.h - 7}" rx="2" fill="${C.acc}" opacity=".55"/>`;
-        s += wheelchair(bay.cx, symY);
-      }
-      s += `<text x="${bay.cx}" y="${labelY}" class="bay-label${type === 'standard' ? '' : ' bay-label-light'}">${bay.id}</text>`;
-    }
-    return s;
-  }
-
-  /* ---------- Cars ---------- */
-  function carMarkup(kind, c) {
-    const v = PS.VEHICLES[kind] || PS.VEHICLES.car;
-    const { hl, hw } = v;
-    const W = hw * 2;
-    const H = hl * 2;
-    const mirror = (y, w, h) =>
-      `<rect x="${-hw - w + 0.6}" y="${y}" width="${w}" height="${h}" rx="1.1" fill="${c}" stroke="#000" stroke-opacity=".35" stroke-width=".5"/>` +
-      `<rect x="${hw - 0.6}" y="${y}" width="${w}" height="${h}" rx="1.1" fill="${c}" stroke="#000" stroke-opacity=".35" stroke-width=".5"/>`;
-    const body = (rx, ry) =>
-      `<rect x="${-hw}" y="${-hl}" width="${W}" height="${H}" rx="${rx}" ry="${ry}" fill="${c}"/>` +
-      `<rect x="${-hw}" y="${-hl}" width="${W}" height="${H}" rx="${rx}" ry="${ry}" fill="url(#ps-carShade)"/>`;
-    const outline = (rx, ry) =>
-      `<rect x="${-hw}" y="${-hl}" width="${W}" height="${H}" rx="${rx}" ry="${ry}" fill="none" stroke="#000" stroke-opacity=".38" stroke-width=".7"/>`;
-    const lights = (w, tw) =>
-      `<rect x="${-hw + 2}" y="${-hl + 0.6}" width="${w}" height="2.1" rx="1" fill="#FFF4CF"/><rect x="${hw - 2 - w}" y="${-hl + 0.6}" width="${w}" height="2.1" rx="1" fill="#FFF4CF"/>` +
-      `<rect x="${-hw + 1.6}" y="${hl - 2.5}" width="${tw}" height="1.9" rx=".9" fill="#D2342C"/><rect x="${hw - 1.6 - tw}" y="${hl - 2.5}" width="${tw}" height="1.9" rx=".9" fill="#D2342C"/>`;
-
-    let s = '';
-    if (kind === 'suv') {
-      s += body(6, 8);
-      s += `<path d="M-12 -14.5 Q0 -17.5 12 -14.5 L11 -7 Q0 -8.2 -11 -7 Z" fill="url(#ps-glass)"/>`;
-      s += `<path d="M-12.8 -12.5 L-11.2 -6.6 L-11.2 21 L-12.8 23.5 Z M12.8 -12.5 L11.2 -6.6 L11.2 21 L12.8 23.5 Z" fill="url(#ps-glass)" opacity=".9"/>`;
-      s += `<rect x="-11" y="-7.4" width="22" height="28.4" rx="2.5" fill="${c}"/><rect x="-11" y="-7.4" width="22" height="28.4" rx="2.5" fill="url(#ps-roofShine)"/>`;
-      s += `<path d="M-8.6 -5 L-8.6 18.5 M8.6 -5 L8.6 18.5" stroke="#1d2327" stroke-opacity=".55" stroke-width="1.1" stroke-linecap="round"/>`;
-      s += `<path d="M-11 21 L11 21 L11.6 25.4 Q0 26.8 -11.6 25.4 Z" fill="url(#ps-glass)"/>`;
-      s += mirror(-12, 3.4, 2.6) + lights(6, 4) + outline(6, 8);
-    } else if (kind === 'van') {
-      s += body(5, 6);
-      s += `<path d="M-12.4 -24.5 Q0 -27.5 12.4 -24.5 L11.8 -18.4 Q0 -19.6 -11.8 -18.4 Z" fill="url(#ps-glass)"/>`;
-      s += `<path d="M-13.2 -22 L-12.2 -18 L-12.2 -6 L-13.2 -5 Z M13.2 -22 L12.2 -18 L12.2 -6 L13.2 -5 Z" fill="url(#ps-glass)" opacity=".9"/>`;
-      s += `<rect x="-12" y="-18.6" width="24" height="48.4" rx="2" fill="${c}"/><rect x="-12" y="-18.6" width="24" height="48.4" rx="2" fill="url(#ps-roofShine)"/>`;
-      s += `<path d="M-12 -6 L12 -6 M-12 6 L12 6 M-12 18 L12 18" stroke="#000" stroke-opacity=".16" stroke-width=".8"/>`;
-      s += mirror(-21, 3.4, 2.8) + lights(6, 3) + outline(5, 6);
-    } else {
-      s += body(8.5, 11);
-      s += `<path d="M-6 -26 Q0 -27.2 6 -26" stroke="#000" stroke-opacity=".18" fill="none" stroke-width=".8"/>`;
-      s += `<path d="M-11 -12.5 Q0 -16 11 -12.5 L9.6 -4 Q0 -5.4 -9.6 -4 Z" fill="url(#ps-glass)"/>`;
-      s += `<path d="M-11.6 -10.5 L-10 -3.6 L-10 11.5 L-11.6 16.5 Z M11.6 -10.5 L10 -3.6 L10 11.5 L11.6 16.5 Z" fill="url(#ps-glass)" opacity=".9"/>`;
-      s += `<rect x="-9.6" y="-4.4" width="19.2" height="16.6" rx="3" fill="${c}"/><rect x="-9.6" y="-4.4" width="19.2" height="16.6" rx="3" fill="url(#ps-roofShine)"/>`;
-      s += `<path d="M-9.6 12.2 Q0 13.4 9.6 12.2 L10.8 18.6 Q0 21 -10.8 18.6 Z" fill="url(#ps-glass)"/>`;
-      s += mirror(-10, 3.2, 2.4) + lights(5.5, 5) + outline(8.5, 11);
-    }
-    return `<g filter="url(#ps-carShadow)">${s}</g>`;
   }
   map.carMarkup = carMarkup;
 
+  /* A body style and options that stay the same for a car's whole visit. */
+  function variant(session) {
+    const h = hashStr(String(session.id || session.plate || ''));
+    const styles = (PS.VEHICLES[session.kind] || PS.VEHICLES.car).styles;
+    const style = styles[h % styles.length];
+    return {
+      style,
+      sunroof: style !== 'van' && style !== 'hatch' && (h >>> 8) % 100 < 24,
+      darkRoof: style === 'suv' && (h >>> 16) % 100 < 22,
+    };
+  }
+
   function makeCar(session) {
+    const v = variant(session);
+    const hex = (PS.CAR_COLORS[session.color] || PS.CAR_COLORS.silver).hex;
     const g = el('g', { class: 'car' });
     g.dataset.sid = session.id;
-    g.innerHTML = carMarkup(session.kind, (PS.CAR_COLORS[session.color] || PS.CAR_COLORS.silver).hex);
+    g.innerHTML = `<use class="car-shadow" href="#ps-shadow-${v.style}"/><g class="car-body">${carMarkup(v.style, hex, v)}</g>`;
+    g._shadow = g.querySelector('.car-shadow');
+    g._body = g.querySelector('.car-body');
     return g;
   }
 
@@ -351,7 +232,149 @@
     return { x: b.cx + (s.jitter ? s.jitter.dx : 0), y: b.parkY, rot: b.noseRot + (s.jitter ? s.jitter.rot : 0) };
   }
 
-  const setPose = (node, p) => node.setAttribute('transform', `translate(${p.x.toFixed(2)} ${p.y.toFixed(2)}) rotate(${p.rot.toFixed(2)})`);
+  /* The body turns with the car; its shadow keeps falling the same way. */
+  function setPose(node, p) {
+    const rot = `rotate(${p.rot.toFixed(2)})`;
+    node.setAttribute('transform', `translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})`);
+    if (node._body) node._body.setAttribute('transform', rot);
+    if (node._shadow) node._shadow.setAttribute('transform', `translate(${SUN[0]} ${SUN[1]}) ${rot}`);
+  }
+
+  /* ---------- Things standing above the cars ---------- */
+  function poleMarkup(x, y) {
+    // a 9 m pole throws a long thin shadow, with its lamp arms as a T at the end
+    const len = 54;
+    const ex = x + 0.611 * len;
+    const ey = y + 0.791 * len;
+    let s = `<path d="M${x + 1} ${y + 1.3}L${f1(ex)} ${f1(ey)}" stroke="#000" stroke-opacity=".26" stroke-width="2.2" stroke-linecap="round"/>`;
+    s += `<path d="M${f1(ex - 12)} ${f1(ey)}H${f1(ex + 12)}" stroke="#000" stroke-opacity=".22" stroke-width="2" stroke-linecap="round"/>`;
+    s += `<rect x="${f1(ex - 15.5)}" y="${f1(ey - 2.4)}" width="7" height="4.8" rx="2" fill="#000" opacity=".2"/><rect x="${f1(ex + 8.5)}" y="${f1(ey - 2.4)}" width="7" height="4.8" rx="2" fill="#000" opacity=".2"/>`;
+    s += `<g transform="translate(${x} ${y})">
+      <rect x="-12" y="-.9" width="24" height="1.8" rx=".9" fill="#3b4146"/>
+      <rect x="-15.5" y="-2.5" width="7.5" height="5" rx="1.6" fill="#d9d6cd" stroke="#4a4f53" stroke-width=".6"/>
+      <rect x="8" y="-2.5" width="7.5" height="5" rx="1.6" fill="#d9d6cd" stroke="#4a4f53" stroke-width=".6"/>
+      <circle r="2.4" fill="#4a5055" stroke="#25292c" stroke-width=".6"/><circle cx="-.7" cy="-.7" r=".9" fill="#fff" opacity=".35"/>
+    </g>`;
+    return s;
+  }
+
+  function canopy() {
+    const scene = PS.scene || {};
+    let s = '';
+    for (const [x, y] of scene.poles || []) s += poleMarkup(x, y);
+    if (scene.treeMarkup) {
+      try {
+        s += scene.treeMarkup();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    return s;
+  }
+
+  /* Barrier arms across the driveways. Raised, an arm is seen end-on from
+   * above, so opening shortens it to a stub by its post. */
+  function gates() {
+    const y = L.gateY;
+    const gate = (name, px, x0, x1) => {
+      const x = Math.min(x0, x1);
+      const w = Math.abs(x1 - x0);
+      return `<g class="gate gate-${name}" data-gate="${name}">
+        <g class="gate-arm" style="transform-origin:${px}px ${y}px">
+          <rect x="${x + 1.6}" y="${y + 0.6}" width="${w}" height="3.2" rx="1.6" fill="#000" opacity=".28"/>
+          <rect x="${x}" y="${y - 1.6}" width="${w}" height="3.2" rx="1.6" fill="#f4f4f1" stroke="#000" stroke-opacity=".3" stroke-width=".4"/>
+          <path d="M${x + 4} ${y}H${x + w - 3}" stroke="#d2342c" stroke-width="3.2" stroke-dasharray="7 7"/>
+        </g>
+        <rect x="${px - 3.4}" y="${y - 3}" width="10" height="9" rx="1.5" fill="#000" opacity=".3"/>
+        <rect x="${px - 5}" y="${y - 4.5}" width="10" height="9" rx="1.5" fill="#e3ad1f" stroke="#2a2f33" stroke-width=".8"/>
+        <rect x="${px - 3.4}" y="${y - 3}" width="6.8" height="2" rx=".8" fill="#fff" opacity=".35"/>
+      </g>`;
+    };
+    const epx = L.entry.x0 - 9;
+    const xpx = L.exit.x1 + 9;
+    return gate('entry', epx, epx + 5, L.entry.x1 - 4) + gate('exit', xpx, xpx - 5, L.exit.x0 + 4);
+  }
+
+  /* ---------- Paint for special bays (changes when bays are repainted) ---------- */
+  const BOLT = 'M2.2 -9.5 L-6 1.6 H-0.6 L-2.4 9.5 L6 -1.8 H0.6 Z';
+  const WHITE = 'url(#ps-paint-white) #f1f1ec';
+
+  function wheelchair() {
+    return `<g fill="none" stroke="${WHITE}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="-0.5" cy="-9.5" r="2.4" fill="${WHITE}" stroke="none"/>
+      <path d="M-1.6 -5.6 V2 H5.2 L7.8 8"/><path d="M-1.6 -2 H4.2"/>
+      <path d="M-4.4 -0.6 A6.4 6.4 0 1 0 4 7.2"/>
+    </g>`;
+  }
+
+  /* Poles stand where four bays meet; a charger goes on a free corner. */
+  const POLE_KEYS = new Set(((PS.scene && PS.scene.poles) || []).map(([x, y]) => `${x},${y}`));
+  function chargerSpot(bay) {
+    const right = bay.x + bay.w;
+    return POLE_KEYS.has(`${right},${bay.backY}`) ? [bay.x, bay.backY] : [right, bay.backY];
+  }
+
+  function charger(x, y) {
+    return `<g transform="translate(${x} ${y})">
+      <circle cx="1.2" cy="1.6" r="5" fill="#000" opacity=".22"/>
+      <circle r="5" fill="#c3c0b8"/><circle r="5" fill="none" stroke="#000" stroke-opacity=".18" stroke-width=".5"/>
+      <rect x="-1.3" y="-1.1" width="5.6" height="4.2" rx="1" fill="#000" opacity=".3"/>
+      <rect x="-2.8" y="-2.2" width="5.6" height="4.4" rx="1" fill="#eef0ee" stroke="#3d4448" stroke-width=".5"/>
+      <rect x="-2.8" y="-2.2" width="5.6" height="1.3" rx=".6" fill="#22a06b"/>
+      <rect x="-1.5" y="-.4" width="3" height="1.8" rx=".4" fill="#24313a"/>
+    </g>`;
+  }
+
+  function typePaint() {
+    let s = '';
+    const posts = new Map();
+    for (const bay of PS.BAYS) {
+      const type = PS.store.typeOf(bay.id);
+      if (type === 'standard') continue;
+      const color = type === 'ev' ? `url(#ps-paint-green) ${C.ev}` : `url(#ps-paint-blue) ${C.acc}`;
+      const back = bay.opensUp ? 1.6 : 1.4; // keep clear of the line at the head of the bay
+      const y = bay.opensUp ? bay.y + 0.4 : bay.y + back;
+      s += `<rect x="${bay.x + 2.2}" y="${y}" width="${bay.w - 4.4}" height="${bay.h - back - 0.4}" fill="${color}"/>`;
+      // symbols read the right way up for a driver pulling in
+      const turn = bay.opensUp ? 180 : 0;
+      const toHead = bay.opensUp ? 1 : -1;
+      const sy = bay.cy + toHead * 8;
+      if (type === 'ev') {
+        s += `<path d="${BOLT}" transform="translate(${bay.cx} ${sy}) rotate(${turn}) scale(1.7)" fill="${WHITE}"/>`;
+        // the word stays upright on the map, by the aisle end of the bay
+        s += `<text x="0" y="0" class="bay-word" transform="translate(${bay.cx} ${bay.opensUp ? bay.edgeY + 22 : bay.edgeY - 6}) scale(1 1.8)">EV</text>`;
+        const [px, py] = chargerSpot(bay);
+        posts.set(`${px},${py}`, [px, py]);
+      } else {
+        s += `<g transform="translate(${bay.cx} ${sy}) rotate(${turn}) scale(1.45)">${wheelchair()}</g>`;
+      }
+    }
+    for (const [x, y] of posts.values()) s += charger(x, y);
+    return s;
+  }
+
+  /* ---------- A plain ground for browsers without canvas drawing ---------- */
+  function plainGround() {
+    const P = L.paved;
+    const W = 4200;
+    let s = `<rect x="-1600" y="-1200" width="${W}" height="3400" fill="${C.lawn}"/>`;
+    for (const band of [L.sidewalk, L.farWalk]) s += `<rect x="-1600" y="${band.y0}" width="${W}" height="${band.y1 - band.y0}" fill="${C.concrete}"/>`;
+    s += `<rect x="-1600" y="${L.street.y0}" width="${W}" height="${L.street.y1 - L.street.y0}" fill="${C.street}"/>`;
+    s += `<path d="M-1600 ${L.streetMid}H2600" stroke="${C.paint}" stroke-width="2.4" stroke-dasharray="56 72"/>`;
+    for (const d of [L.entry, L.exit]) s += `<rect x="${d.x0}" y="${P.y + P.h - 30}" width="${d.x1 - d.x0}" height="${L.sidewalk.y1 - (P.y + P.h) + 34}" fill="${C.asphalt}"/>`;
+    s += `<rect x="${P.x}" y="${P.y}" width="${P.w}" height="${P.h}" rx="${P.r}" fill="${C.asphalt}" stroke="${C.kerb}" stroke-width="5"/>`;
+    for (const b of Object.values(L.blocks)) {
+      for (const ix of [b.x, b.x + b.w - L.island]) {
+        s += `<rect x="${ix + 4}" y="${b.y + 4}" width="${L.island - 8}" height="${b.h - 8}" rx="${(L.island - 8) / 2}" fill="${C.mulch}" stroke="${C.kerb}" stroke-width="3.4"/>`;
+      }
+      let d = `M${L.bayX0} ${b.y + b.h / 2}H${L.bayX0 + L.cols * L.bayW}`;
+      for (let c = 0; c <= L.cols; c++) d += `M${L.bayX0 + c * L.bayW} ${b.y + 1}V${b.y + b.h - 1}`;
+      s += `<path d="${d}" stroke="${C.paint}" stroke-width="2" opacity=".9"/>`;
+    }
+    for (const bay of PS.BAYS) s += `<text x="${bay.cx}" y="${bay.edgeY + (bay.opensUp ? -14 : 24)}" class="bay-num">${bay.id}</text>`;
+    s += `<rect x="${L.booth.x}" y="${L.booth.y}" width="${L.booth.w}" height="${L.booth.h}" fill="#c8cbcc" stroke="#8c9194"/>`;
+    return s;
+  }
 
   /* ---------- Mount ---------- */
   map.mount = function (container) {
@@ -364,7 +387,12 @@
       'aria-label': `Parking lot map with ${PS.BAYS.length} bays. Use the arrow keys to move between bays and Enter to open one.`,
     });
     svg.innerHTML = defs();
-    const names = ['ground', 'paint', 'types', 'route', 'leds', 'cars', 'moving', 'canopy', 'gates', 'heat', 'marks', 'hit', 'measure'];
+    try {
+      PS.scene.addDefs(svg.querySelector('defs'));
+    } catch (err) {
+      console.error(err);
+    }
+    const names = ['ground', 'types', 'route', 'leds', 'cars', 'moving', 'gates', 'canopy', 'heat', 'marks', 'hit', 'measure'];
     for (const n of names) {
       const g = el('g', { class: `layer layer-${n}` });
       if (n !== 'hit') g.setAttribute('aria-hidden', 'true');
@@ -372,13 +400,13 @@
       map.layers[n] = g;
     }
     map.layers.measure.setAttribute('visibility', 'hidden');
-    map.layers.ground.innerHTML = ground();
-    map.layers.paint.innerHTML = staticPaint();
+    map.svg = svg;
+    container.appendChild(svg);
+    map.painted = !!(PS.scene && PS.scene.mount(container, svg));
+    if (!map.painted) map.layers.ground.innerHTML = plainGround();
     map.layers.canopy.innerHTML = canopy();
     map.layers.gates.innerHTML = gates();
     map.layers.marks.innerHTML = `<rect class="target-ring" x="0" y="0" width="${L.bayW - 4}" height="${L.bayD - 4}" rx="5" visibility="hidden"/>`;
-    map.svg = svg;
-    container.appendChild(svg);
     buildBays();
     paintTypes();
     attachEvents();
@@ -396,8 +424,9 @@
         `<rect class="bay-ring" x="${bay.x + 2.5}" y="${bay.y + 2.5}" width="${bay.w - 5}" height="${bay.h - 5}" rx="4"/>`;
       map.layers.hit.appendChild(g);
       map.bayEls.set(bay.id, g);
-      const ly = bay.opensUp ? bay.backY - 4.6 : bay.backY + 4.6;
-      leds += `<g class="led" data-id="${bay.id}"><circle class="led-halo" cx="${bay.cx}" cy="${ly}" r="5"/><circle class="led-core" cx="${bay.cx}" cy="${ly}" r="2.3"/></g>`;
+      // the sensor light sits on the aisle just outside the bay, where a parked car can't hide it
+      const ly = bay.edgeY + (bay.opensUp ? -7 : 7);
+      leds += `<g class="led" data-id="${bay.id}"><circle class="led-halo" cx="${bay.cx}" cy="${ly}" r="6.5"/><circle class="led-base" cx="${bay.cx}" cy="${ly}" r="3.4"/><circle class="led-core" cx="${bay.cx}" cy="${ly}" r="2.1"/></g>`;
     }
     map.layers.leds.innerHTML = leds;
     map.ledEls = new Map(U.$$('.led', map.layers.leds).map((n) => [n.dataset.id, n]));
@@ -490,7 +519,7 @@
     for (const bay of PS.BAYS) {
       const share = util[bay.id].share;
       s += `<rect x="${bay.x + 2}" y="${bay.y + 2}" width="${bay.w - 4}" height="${bay.h - 4}" rx="3" fill="${heatColor(share)}" opacity=".95"/>`;
-      s += `<text x="${bay.cx}" y="${bay.cy + 4}" class="heat-label">${Math.round(share * 100)}%</text>`;
+      s += `<text x="${bay.cx}" y="${bay.cy + 5}" class="heat-label">${Math.round(share * 100)}%</text>`;
     }
     map.layers.heat.innerHTML = s;
     map.heatData = util;
@@ -583,7 +612,7 @@
     const pts = [start, ...r.forward.filter((p) => p[1] < L.gateY)];
     const d = R.roundedPath(pts);
     layer.innerHTML = `<path class="route-casing" d="${d}"/><path class="route-line" d="${d}"/>
-      <circle class="route-start" cx="${start[0]}" cy="${start[1]}" r="5"/>`;
+      <circle class="route-start" cx="${start[0]}" cy="${start[1]}" r="6"/>`;
     const b = PS.BAY_BY_ID[spot];
     ring.setAttribute('x', b.x + 2);
     ring.setAttribute('y', b.y + 2);
@@ -604,13 +633,14 @@
   const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
   const gateUsers = { entry: new Set(), exit: new Set() };
+  const GATE_LANES = { entry: L.xL + L.laneOffset, exit: L.xR - L.laneOffset };
   function setGate(name, open) {
     const g = map.layers.gates.querySelector(`[data-gate="${name}"]`);
     if (g) g.classList.toggle('is-open', open);
   }
   function trackGates(id, pt) {
-    for (const [name, gx] of [['entry', L.xL], ['exit', L.xR]]) {
-      const near = Math.hypot(pt.x - gx, pt.y - L.gateY) < 118;
+    for (const [name, gx] of Object.entries(GATE_LANES)) {
+      const near = Math.hypot(pt.x - gx, pt.y - L.gateY) < 120;
       const users = gateUsers[name];
       if (near && !users.has(id)) {
         users.add(id);

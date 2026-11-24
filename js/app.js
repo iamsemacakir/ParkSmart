@@ -27,7 +27,7 @@
 
   function miniCar(kind, color, cls = 'mini-car') {
     const hex = (PS.CAR_COLORS[color] || PS.CAR_COLORS.silver).hex;
-    return `<svg class="${cls}" viewBox="-34 -17 68 34" aria-hidden="true"><g transform="rotate(90)">${map.carMarkup(kind, hex)}</g></svg>`;
+    return `<svg class="${cls}" viewBox="-48 -21 96 42" aria-hidden="true"><g transform="rotate(90)">${map.carMarkup(kind, hex)}</g></svg>`;
   }
   PS.miniCar = miniCar;
 
